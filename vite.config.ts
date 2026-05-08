@@ -1,5 +1,4 @@
 import react from '@vitejs/plugin-react';
-import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vitest/config';
@@ -9,11 +8,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 };
 
 function gitCommit(): string {
-  try {
-    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
-  } catch {
-    return 'dev';
-  }
+  return process.env.BUILD_COMMIT ?? 'offline';
 }
 
 export default defineConfig({

@@ -1,15 +1,6 @@
-import { execSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-
-function run(command, fallback) {
-  try {
-    return execSync(command, { encoding: 'utf8' }).trim();
-  } catch {
-    return fallback;
-  }
-}
 
 mkdirSync('public', { recursive: true });
 writeFileSync(
@@ -17,8 +8,7 @@ writeFileSync(
   `${JSON.stringify(
     {
       version: pkg.version,
-      commit: run('git rev-parse --short HEAD', 'dev'),
-      generatedAt: new Date().toISOString(),
+      commit: process.env.BUILD_COMMIT ?? 'offline',
       repository: 'https://github.com/baditaflorin/pcap-lens'
     },
     null,
