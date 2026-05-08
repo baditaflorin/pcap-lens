@@ -1,0 +1,8 @@
+node_modules/
+coverage/
+playwright-report/
+test-results/
+docs/assets/
+docs/index.html
+docs/404.html
+docs/service-worker.js

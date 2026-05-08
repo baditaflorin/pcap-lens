@@ -3,7 +3,7 @@ set -euo pipefail
 
 npm run build
 
-PORT="${PORT:-4173}"
+PORT="${PORT:-$(node -e "const net=require('node:net');const server=net.createServer();server.listen(0,'127.0.0.1',()=>{console.log(server.address().port);server.close();});")}"
 npx vite preview --host 127.0.0.1 --port "${PORT}" --strictPort > /tmp/pcap-lens-smoke.log 2>&1 &
 SERVER_PID=$!
 

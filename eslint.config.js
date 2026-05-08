@@ -9,6 +9,7 @@ export default tseslint.config(
       'docs/assets/**',
       'docs/index.html',
       'docs/404.html',
+      'docs/service-worker.js',
       'coverage/**',
       'postcss.config.cjs',
       'public/service-worker.js'
@@ -26,6 +27,15 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-non-null-assertion': 'error'
+    }
+  },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly'
+      }
     }
   }
 );
