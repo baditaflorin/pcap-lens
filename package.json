@@ -1,0 +1,50 @@
+{
+  "name": "pcap-lens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based PCAP analyzer with protocol decoding, flow graphs, and Suricata-style rule matching.",
+  "scripts": {
+    "dev": "vite",
+    "prebuild": "node scripts/write-version.mjs && node scripts/clean-pages.mjs",
+    "build": "tsc -b && vite build",
+    "postbuild": "node scripts/postbuild-pages.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . && prettier --check .",
+    "fmt": "prettier --write .",
+    "typecheck": "tsc -b",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "latest",
+    "comlink": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@playwright/test": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "autoprefixer": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "jsdom": "latest",
+    "postcss": "latest",
+    "prettier": "latest",
+    "tailwindcss": "^3.4.17",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}

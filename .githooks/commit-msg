@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="$1"
+first_line="$(head -n 1 "${message_file}")"
+
+if [[ ! "${first_line}" =~ ^(feat|fix|docs|chore|refactor|test|ops|data)(\([a-z0-9._-]+\))?!?:\ .+ ]]; then
+  echo "Commit message must use Conventional Commits." >&2
+  echo "Example: feat: add packet parser" >&2
+  exit 1
+fi
