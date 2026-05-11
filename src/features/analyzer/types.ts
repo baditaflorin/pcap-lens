@@ -124,6 +124,23 @@ export interface GraphEdge {
   ruleMatchCount: number;
 }
 
+/**
+ * Subset of the Suricata `flow:` keyword. Each rule may require:
+ * - `established` — only fire after a TCP handshake has been seen (any
+ *   packet following a SYN+SYN/ACK pair for the same 5-tuple).
+ * - `to_server` — the packet must travel from the side that sent the
+ *   original SYN to the side that sent the SYN/ACK.
+ * - `to_client` — the opposite direction.
+ *
+ * Stateless flows leave this `undefined`; the matcher keeps its
+ * pre-state behaviour for those rules.
+ */
+export interface RuleFlow {
+  established?: boolean;
+  toServer?: boolean;
+  toClient?: boolean;
+}
+
 export interface ParsedRule {
   id: string;
   line: number;
@@ -139,6 +156,7 @@ export interface ParsedRule {
   rev?: string;
   classtype?: string;
   contents: RuleContent[];
+  flow?: RuleFlow;
   raw: string;
 }
 

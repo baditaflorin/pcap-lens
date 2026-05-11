@@ -2,20 +2,108 @@ import type {
   InternalDecodedPacket,
   ParsedRule,
   RuleContent,
+  RuleFlow,
   RuleMatch,
   RuleParseError
 } from '@/features/analyzer/types';
 import { bytesToAscii } from '@/lib/format';
 
+/**
+ * In-flight TCP-flow state. Keyed by canonicalised 5-tuple. Tracks the
+ * direction the original SYN went so we can label `to_server` /
+ * `to_client` correctly, and remembers whether the handshake has been
+ * seen so `flow:established` rules wait for it.
+ */
+interface FlowState {
+  /** "synSideKey" identifies the side that sent the SYN (= the client). */
+  synSideKey: string | null;
+  established: boolean;
+}
+
+function endpointKey(address: string | undefined, port: number | undefined): string {
+  return `${address ?? ''}:${port ?? ''}`;
+}
+
+function flowKey(packet: InternalDecodedPacket): string {
+  // Canonical 5-tuple: sort the two endpoint keys so A→B and B→A both
+  // resolve to the same flow.
+  const a = endpointKey(packet.source, packet.sourcePort);
+  const b = endpointKey(packet.destination, packet.destinationPort);
+  const protocol = packet.transportProtocol ?? 'IP';
+  return a < b ? `${protocol}|${a}|${b}` : `${protocol}|${b}|${a}`;
+}
+
+function updateFlowState(packet: InternalDecodedPacket, state: FlowState): void {
+  if (packet.transportProtocol !== 'TCP' || !packet.tcp) {
+    // UDP/ICMP have no handshake — treat the first packet as
+    // establishing the flow direction and the second onwards as
+    // "established", which matches Suricata's bidirectional flow
+    // tracking for stateless protocols.
+    if (!state.synSideKey) {
+      state.synSideKey = endpointKey(packet.source, packet.sourcePort);
+    } else if (!state.established) {
+      state.established = true;
+    }
+    return;
+  }
+  const flags = packet.tcp.flags.map((f) => f.toUpperCase());
+  const hasSyn = flags.includes('SYN');
+  const hasAck = flags.includes('ACK');
+  const sideKey = endpointKey(packet.source, packet.sourcePort);
+
+  if (hasSyn && !hasAck && !state.synSideKey) {
+    // First SYN — record the client side.
+    state.synSideKey = sideKey;
+  } else if (hasSyn && hasAck && state.synSideKey && state.synSideKey !== sideKey) {
+    // SYN/ACK from the other side completes step 2 of the handshake.
+    // The next packet from the client (the final ACK) will fully
+    // establish, but we mark established here too — Suricata considers
+    // flow:established true after the SYN/ACK is observed because the
+    // server has accepted the connection.
+    state.established = true;
+  } else if (!hasSyn && state.synSideKey) {
+    // Any post-SYN packet on the flow means we've moved past handshake.
+    state.established = true;
+  }
+}
+
+function packetDirection(
+  packet: InternalDecodedPacket,
+  state: FlowState
+): 'to_server' | 'to_client' | 'unknown' {
+  if (!state.synSideKey) return 'unknown';
+  const sideKey = endpointKey(packet.source, packet.sourcePort);
+  return sideKey === state.synSideKey ? 'to_server' : 'to_client';
+}
+
+export function parseFlowOption(value: string): RuleFlow {
+  const flow: RuleFlow = {};
+  for (const part of value.split(',').map((s) => s.trim().toLowerCase())) {
+    if (part === 'established') flow.established = true;
+    else if (part === 'to_server' || part === 'from_client') flow.toServer = true;
+    else if (part === 'to_client' || part === 'from_server') flow.toClient = true;
+    // 'stateless' / 'no_state' explicitly opt out — leave the flow
+    // object empty so the matcher behaves as before. Unknown options
+    // are ignored rather than failing the rule (forward compat with
+    // Suricata's longer list).
+  }
+  return flow;
+}
+
 const HEADER_RE =
   /^\s*(alert|drop|pass|log|reject)\s+(\S+)\s+(\S+)\s+(\S+)\s+(->|<>)\s+(\S+)\s+(\S+)\s*\((.*)\)\s*$/i;
 
 export const DEFAULT_RULES = `# v1 Suricata-style subset: action proto src src_port -> dst dst_port (options)
+# Supported options: msg, content, nocase, sid, rev, classtype, flow.
+# Supported flow keywords: established, to_server, to_client.
 alert http any any -> any any (msg:"HTTP request observed"; content:"GET"; nocase; sid:1000001; rev:1;)
 alert dns any any -> any any (msg:"DNS lookup observed"; sid:1000002; rev:1;)
 alert dns any any -> any any (msg:"DNS query references example"; content:"example"; nocase; sid:1000003; rev:1;)
 alert tls any any -> any 443 (msg:"TLS record on 443"; sid:1000004; rev:1;)
-alert tcp any any -> any 80 (msg:"Plain HTTP destination port"; sid:1000005; rev:1;)`;
+alert tcp any any -> any 80 (msg:"Plain HTTP destination port"; sid:1000005; rev:1;)
+# Stateful example — only fires once a TCP handshake has been observed
+# AND the packet is travelling from the client side to the server side:
+# alert tcp any any -> any 443 (msg:"Outbound TLS data"; flow:established,to_server; sid:1000006; rev:1;)`;
 
 export function parseRules(text: string): { rules: ParsedRule[]; errors: RuleParseError[] } {
   const rules: ParsedRule[] = [];
@@ -55,6 +143,9 @@ export function parseRules(text: string): { rules: ParsedRule[]; errors: RulePar
     const sid = firstOption(options, 'sid') ?? `line-${line}`;
     const contents = contentOptions(options);
 
+    const flowRaw = firstOption(options, 'flow');
+    const flow = flowRaw ? parseFlowOption(flowRaw) : undefined;
+
     rules.push({
       id: sid,
       line,
@@ -70,6 +161,7 @@ export function parseRules(text: string): { rules: ParsedRule[]; errors: RulePar
       rev: firstOption(options, 'rev'),
       classtype: firstOption(options, 'classtype'),
       contents,
+      flow,
       raw
     });
   });
@@ -79,12 +171,25 @@ export function parseRules(text: string): { rules: ParsedRule[]; errors: RulePar
 
 export function matchRules(packets: InternalDecodedPacket[], rules: ParsedRule[]): RuleMatch[] {
   const matches: RuleMatch[] = [];
+  // Per-flow state computed by walking packets in capture order. The
+  // map is local to this call so re-running matchRules with a fresh
+  // rule set (e.g. after the user edits the rule textarea) doesn't
+  // accidentally remember handshakes from a previous run.
+  const flowStates = new Map<string, FlowState>();
 
   for (const packet of packets) {
+    const key = flowKey(packet);
+    let flowState = flowStates.get(key);
+    if (!flowState) {
+      flowState = { synSideKey: null, established: false };
+      flowStates.set(key, flowState);
+    }
+    updateFlowState(packet, flowState);
+
     const packetMatches: string[] = [];
 
     for (const rule of rules) {
-      if (matchesRule(packet, rule)) {
+      if (matchesRule(packet, rule, flowState)) {
         packetMatches.push(rule.id);
         matches.push({
           id: `${rule.id}-${packet.index}`,
@@ -105,7 +210,33 @@ export function matchRules(packets: InternalDecodedPacket[], rules: ParsedRule[]
   return matches;
 }
 
-function matchesRule(packet: InternalDecodedPacket, rule: ParsedRule): boolean {
+function matchesFlow(
+  packet: InternalDecodedPacket,
+  rule: ParsedRule,
+  flowState: FlowState
+): boolean {
+  if (!rule.flow) return true;
+  if (rule.flow.established && !flowState.established) {
+    // For a stateful rule, the very first packet on a flow can't have
+    // observed the handshake yet — wait for the next one.
+    return false;
+  }
+  if (rule.flow.toServer || rule.flow.toClient) {
+    const direction = packetDirection(packet, flowState);
+    if (rule.flow.toServer && direction !== 'to_server') return false;
+    if (rule.flow.toClient && direction !== 'to_client') return false;
+  }
+  return true;
+}
+
+function matchesRule(
+  packet: InternalDecodedPacket,
+  rule: ParsedRule,
+  flowState: FlowState
+): boolean {
+  if (!matchesFlow(packet, rule, flowState)) {
+    return false;
+  }
   if (!matchesProtocol(packet, rule.protocol)) {
     return false;
   }
