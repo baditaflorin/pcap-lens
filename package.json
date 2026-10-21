@@ -41,7 +41,7 @@
     "jsdom": "latest",
     "postcss": "latest",
     "prettier": "latest",
-    "tailwindcss": "^3.4.17",
+    "tailwindcss": "^4.3.3",
     "typescript": "latest",
     "typescript-eslint": "latest",
     "vite": "latest",
